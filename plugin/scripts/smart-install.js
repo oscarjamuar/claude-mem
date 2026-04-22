@@ -388,6 +388,50 @@ function registerWindowsAutoStart() {
 }
 
 /**
+ * Register claude-mem MCP server in Claude Desktop App config automatically.
+ * Safe to call multiple times — checks for existing entry first.
+ * Only runs on Windows since that's where the Desktop App config lives.
+ */
+function registerClaudeDesktopMCP() {
+  const markerPath = join(ROOT, '.desktop-mcp-registered');
+  if (existsSync(markerPath)) return;
+
+  try {
+    const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
+    const configPath = join(appData, 'Claude', 'claude_desktop_config.json');
+
+    if (!existsSync(configPath)) {
+      // Claude Desktop not installed — skip silently
+      return;
+    }
+
+    const mcpServerPath = join(ROOT, 'scripts', 'desktop-mcp-server.cjs');
+    if (!existsSync(mcpServerPath)) return;
+
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    if (!config.mcpServers) config.mcpServers = {};
+
+    // Already registered — just write the marker
+    if (config.mcpServers['claude-mem']) {
+      writeFileSync(markerPath, new Date().toISOString());
+      return;
+    }
+
+    config.mcpServers['claude-mem'] = {
+      command: 'node',
+      args: [mcpServerPath.replace(/\//g, '\\')],
+    };
+
+    writeFileSync(configPath, JSON.stringify(config, null, 2));
+    writeFileSync(markerPath, new Date().toISOString());
+    console.error('✅ claude-mem registered in Claude Desktop App (MCP)');
+    console.error('   Restart Claude Desktop to activate memory tools');
+  } catch (err) {
+    console.error('⚠️  Could not register Claude Desktop MCP:', err.message);
+  }
+}
+
+/**
  * Add shell alias for claude-mem command
  */
 function installCLI() {
@@ -687,6 +731,7 @@ try {
   // Step 5: Register Windows auto-start (Task Scheduler) so worker starts on login
   if (IS_WINDOWS) {
     registerWindowsAutoStart();
+    registerClaudeDesktopMCP();
   }
 
   // Step 6: Warn if the bundled native binary is incompatible with this platform
