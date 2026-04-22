@@ -17,25 +17,23 @@ const http = require('http');
 const path = require('path');
 const os = require('os');
 
-// ── Worker port resolution (same logic as hook-runner.js) ────────────────────
+// ── Worker port resolution ───────────────────────────────────────────────────
+// Priority: env var → settings file → default 37777
 function resolvePort() {
+  // 1. Explicit env var (set by user or Task Scheduler)
+  if (process.env.CLAUDE_MEM_WORKER_PORT) {
+    return parseInt(process.env.CLAUDE_MEM_WORKER_PORT, 10);
+  }
+  // 2. Read from ~/.claude-mem/settings.json if present
   try {
-    const info = os.userInfo();
-    const uid = typeof info.uid === 'number' && info.uid >= 0
-      ? info.uid
-      : usernameHash(info.username);
-    return 37700 + (uid % 100);
-  } catch {
-    return 37777;
-  }
-}
-
-function usernameHash(username) {
-  let h = 0;
-  for (let i = 0; i < (username || '').length; i++) {
-    h = (Math.imul(31, h) + username.charCodeAt(i)) >>> 0;
-  }
-  return h % 100;
+    const settingsPath = path.join(os.homedir(), '.claude-mem', 'settings.json');
+    if (require('fs').existsSync(settingsPath)) {
+      const s = JSON.parse(require('fs').readFileSync(settingsPath, 'utf8'));
+      if (s.CLAUDE_MEM_WORKER_PORT) return parseInt(s.CLAUDE_MEM_WORKER_PORT, 10);
+    }
+  } catch { /* ignore */ }
+  // 3. Default — matches worker-service.cjs default
+  return 37777;
 }
 
 const PORT = resolvePort();
