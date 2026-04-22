@@ -140,57 +140,84 @@ const TOOLS = [
 async function handleTool(name, args) {
   switch (name) {
     case 'search': {
-      const qs = new URLSearchParams({ q: args.query, limit: String(args.limit || 10) });
+      // Use observations text search (works without Chroma vector DB)
+      const qs = new URLSearchParams({ limit: String(args.limit || 10) });
+      if (args.query) qs.set('search', args.query);
       if (args.project) qs.set('project', args.project);
-      const res = await workerRequest('GET', `/api/search?${qs}`);
+      const res = await workerRequest('GET', `/api/observations?${qs}`);
       if (res.status !== 200) throw new Error(`Search failed: ${JSON.stringify(res.body)}`);
-      const items = res.body.items || res.body.results || res.body || [];
-      if (!items.length) return 'No results found.';
+      const items = Array.isArray(res.body) ? res.body : (res.body.items ? Object.values(res.body.items) : []);
+      if (!items.length) return 'No results found in memory.';
       return items.map(r =>
-        `[ID:${r.id}] ${r.type || 'note'} | ${r.project || '—'} | ${r.created_at?.slice(0, 10) || ''}\n${r.summary || r.content || ''}`
+        `[ID:${r.id}] ${r.type || 'note'} | ${r.project || '—'} | ${(r.created_at || '').slice(0, 10)}\n${r.text || r.title || ''}`
       ).join('\n\n');
     }
 
     case 'get_observations': {
       const res = await workerRequest('POST', '/api/observations/batch', { ids: args.ids });
       if (res.status !== 200) throw new Error(`Fetch failed: ${JSON.stringify(res.body)}`);
-      const items = res.body.items || res.body || [];
+      const items = Array.isArray(res.body) ? res.body : (res.body.items ? Object.values(res.body.items) : []);
       if (!items.length) return 'No observations found for those IDs.';
       return items.map(r =>
-        `[ID:${r.id}] ${r.type} | ${r.project || '—'} | ${r.created_at?.slice(0, 16) || ''}\n${r.content}`
+        `[ID:${r.id}] ${r.type} | ${r.project || '—'} | ${(r.created_at || '').slice(0, 16)}\n${r.text || r.title || ''}`
       ).join('\n\n---\n\n');
     }
 
     case 'timeline': {
-      const qs = new URLSearchParams({ q: args.query, limit: String(args.limit || 10) });
-      const res = await workerRequest('GET', `/api/search/timeline?${qs}`);
-      if (res.status !== 200) {
-        // Fallback to regular search if timeline endpoint not available
-        const fallback = await workerRequest('GET', `/api/search?${qs}`);
-        const items = fallback.body.items || fallback.body || [];
-        return items.map(r =>
-          `[ID:${r.id}] ${r.created_at?.slice(0, 16) || ''} | ${r.type} | ${r.summary || r.content || ''}`
-        ).join('\n');
-      }
-      const items = res.body.items || res.body || [];
+      // Fetch recent observations sorted by date as a timeline
+      const qs = new URLSearchParams({ limit: String(args.limit || 10) });
+      if (args.query) qs.set('search', args.query);
+      const res = await workerRequest('GET', `/api/observations?${qs}`);
+      const items = Array.isArray(res.body) ? res.body : (res.body.items ? Object.values(res.body.items) : []);
+      if (!items.length) return 'No timeline results found.';
       return items.map(r =>
-        `[ID:${r.id}] ${r.created_at?.slice(0, 16) || ''} | ${r.type} | ${r.summary || r.content || ''}`
-      ).join('\n');
+        `[ID:${r.id}] ${(r.created_at || '').slice(0, 16)} | ${r.type} | ${r.project || '—'}\n${r.text || r.title || ''}`
+      ).join('\n\n');
     }
 
     case 'store_observation': {
-      // Use the session observations endpoint — create an ad-hoc desktop session ID
-      const sessionId = `desktop-${Date.now()}`;
-      const res = await workerRequest('POST', '/api/sessions/observations', {
-        contentSessionId: sessionId,
-        tool_name: 'desktop_note',
-        tool_input: { note: args.content, type: args.type || 'note' },
-        tool_response: args.content,
-        cwd: args.project || os.homedir(),
-        platformSource: 'claude-desktop',
+      // Use /api/import to directly insert a session + observation into the DB.
+      // The sessions/observations endpoint requires an active Claude Code session,
+      // so we use the import endpoint which works standalone.
+      const now = new Date().toISOString();
+      const epoch = Date.now();
+      const sid = `desktop-${epoch}`;
+      const project = args.project || 'claude-desktop';
+
+      const res = await workerRequest('POST', '/api/import', {
+        sessions: [{
+          content_session_id: sid,
+          memory_session_id: sid,
+          project,
+          platform_source: 'claude-desktop',
+          user_prompt: `Desktop note: ${(args.content || '').slice(0, 80)}`,
+          started_at: now,
+          started_at_epoch: epoch,
+          completed_at: now,
+          completed_at_epoch: epoch,
+          status: 'completed',
+        }],
+        observations: [{
+          memory_session_id: sid,
+          project,
+          text: args.content,
+          type: args.type || 'note',
+          title: (args.content || '').slice(0, 80),
+          subtitle: 'Saved from Claude Desktop App',
+          facts: null,
+          narrative: null,
+          concepts: null,
+          files_read: null,
+          files_modified: null,
+          prompt_number: 1,
+          discovery_tokens: 0,
+          created_at: now,
+          created_at_epoch: epoch,
+        }],
       });
       if (res.status >= 400) throw new Error(`Store failed: ${JSON.stringify(res.body)}`);
-      return `✅ Observation saved to claude-mem memory (type: ${args.type || 'note'})`;
+      const imported = res.body?.stats?.observationsImported ?? '?';
+      return `✅ Observation saved to claude-mem memory (type: ${args.type || 'note'}, imported: ${imported})`;
     }
 
     default:
