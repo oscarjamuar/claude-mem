@@ -11,6 +11,7 @@ import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
+import { spawnSync } from 'child_process';
 import {
   claudeSettingsPath,
   installedPluginsPath,
@@ -66,6 +67,15 @@ function removeFromClaudeSettings(): void {
     delete settings.enabledPlugins['claude-mem@thedotmack'];
     writeJsonFileAtomic(claudeSettingsPath(), settings);
   }
+}
+
+function removeWindowsAutoStart(): number {
+  if (process.platform !== 'win32') return -1;
+  const result = spawnSync('schtasks', ['/Delete', '/TN', 'claude-mem-worker', '/F'], {
+    stdio: 'pipe',
+    shell: false,
+  });
+  return result.status ?? 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +205,7 @@ export async function runUninstallCommand(): Promise<void> {
       const { uninstallCodexCli } = await import('../../services/integrations/CodexCliInstaller.js');
       return uninstallCodexCli();
     }},
+    { label: 'Windows auto-start task', fn: () => removeWindowsAutoStart() },
   ];
 
   for (const { label, fn } of ideCleanups) {
