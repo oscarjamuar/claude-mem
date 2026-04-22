@@ -425,7 +425,23 @@ function registerClaudeDesktopMCP() {
     writeFileSync(configPath, JSON.stringify(config, null, 2));
     writeFileSync(markerPath, new Date().toISOString());
     console.error('✅ claude-mem registered in Claude Desktop App (MCP)');
-    console.error('   Restart Claude Desktop to activate memory tools');
+    console.error('   Restart Claude Desktop to activate memory tools.');
+    console.error('');
+    console.error('─────────────────────────────────────────────────────────────────');
+    console.error('  ACTION REQUIRED: Enable auto-save in Claude Desktop');
+    console.error('─────────────────────────────────────────────────────────────────');
+    console.error('  Claude Desktop does not support automatic hook injection.');
+    console.error('  To enable auto-save for a project, paste the following into');
+    console.error('  Project Settings → Custom Instructions (one-time per project):');
+    console.error('');
+    console.error('  You have claude-mem memory tools. At the START of every');
+    console.error('  conversation, call search with keywords from the user\'s first');
+    console.error('  message. During the conversation, call store_observation when');
+    console.error('  important decisions, bugs, or discoveries happen. At the END,');
+    console.error('  call store_observation with a summary of what was worked on.');
+    console.error('  Always set project to the project name if known.');
+    console.error('─────────────────────────────────────────────────────────────────');
+    console.error('');
   } catch (err) {
     console.error('⚠️  Could not register Claude Desktop MCP:', err.message);
   }
