@@ -340,6 +340,53 @@ function installUv() {
 }
 
 /**
+ * Register claude-mem worker as a Windows Task Scheduler job so it
+ * starts automatically on user login — no admin rights required.
+ * Safe to call multiple times (checks for existing task first).
+ */
+function registerWindowsAutoStart() {
+  const TASK_NAME = 'claude-mem-worker';
+  const markerPath = join(ROOT, '.autostart-registered');
+
+  if (existsSync(markerPath)) return;
+
+  try {
+    // Check if task already exists
+    const check = spawnSync('schtasks', ['/Query', '/TN', TASK_NAME], {
+      stdio: 'pipe', shell: false,
+    });
+    if (check.status === 0) {
+      // Task already registered
+      writeFileSync(markerPath, new Date().toISOString());
+      return;
+    }
+
+    // node executable path (guaranteed to exist — we're running in it)
+    const nodePath = process.execPath;
+    const hookRunner = join(ROOT, 'scripts', 'hook-runner.js');
+
+    // Create a hidden at-logon task for the current user (no admin needed)
+    const result = spawnSync('schtasks', [
+      '/Create',
+      '/TN', TASK_NAME,
+      '/TR', `"${nodePath}" "${hookRunner}" start-worker`,
+      '/SC', 'ONLOGON',
+      '/RL', 'LIMITED',   // run as current user, limited privileges
+      '/F',               // overwrite if exists
+    ], { stdio: 'pipe', shell: false });
+
+    if (result.status === 0) {
+      writeFileSync(markerPath, new Date().toISOString());
+      console.error('✅ claude-mem registered to auto-start on Windows login');
+    } else {
+      console.error('⚠️  Could not register auto-start task:', (result.stderr || '').toString().trim());
+    }
+  } catch (err) {
+    console.error('⚠️  Auto-start registration skipped:', err.message);
+  }
+}
+
+/**
  * Add shell alias for claude-mem command
  */
 function installCLI() {
@@ -612,17 +659,21 @@ try {
     const port = process.env.CLAUDE_MEM_WORKER_PORT || 37777;
     console.error(`[claude-mem] Plugin updated to v${newVersion} - restarting worker...`);
     try {
-      // Graceful shutdown via HTTP (curl is cross-platform enough)
-      execSync(`curl -s -X POST http://127.0.0.1:${port}/api/admin/shutdown`, {
-        stdio: 'ignore',
-        shell: IS_WINDOWS,
-        timeout: 5000
+      // Graceful shutdown via native Node http (no curl dependency)
+      await new Promise((resolve) => {
+        const req = require('http').request({
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/admin/shutdown',
+          method: 'POST',
+          timeout: 5000,
+        }, () => resolve());
+        req.on('error', () => resolve());
+        req.on('timeout', () => { req.destroy(); resolve(); });
+        req.end();
       });
-      // Brief wait for port to free
-      execSync(IS_WINDOWS ? 'timeout /t 1 /nobreak >nul' : 'sleep 0.5', {
-        stdio: 'ignore',
-        shell: true
-      });
+      // Brief wait for port to free (cross-platform)
+      await new Promise(r => setTimeout(r, 500));
     } catch {
       // Worker wasn't running or already stopped - that's fine
     }
@@ -632,7 +683,12 @@ try {
   // Step 4: Install CLI to PATH
   installCLI();
 
-  // Step 5: Warn if the bundled native binary is incompatible with this platform
+  // Step 5: Register Windows auto-start (Task Scheduler) so worker starts on login
+  if (IS_WINDOWS) {
+    registerWindowsAutoStart();
+  }
+
+  // Step 6: Warn if the bundled native binary is incompatible with this platform
   checkBinaryPlatformCompatibility();
 
   // Output valid JSON for Claude Code hook contract
