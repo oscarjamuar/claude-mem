@@ -144,14 +144,14 @@ async function main() {
       }
       const TASK_NAME = 'claude-mem-worker';
       const hookRunner = path.join(pluginRoot, 'scripts', 'hook-runner.js');
-      const result = spawnSync('schtasks', [
-        '/Create',
-        '/TN', TASK_NAME,
-        '/TR', `"${process.execPath}" "${hookRunner}" start-worker`,
-        '/SC', 'ONLOGON',
-        '/RL', 'LIMITED',
-        '/F',
-      ], { stdio: 'pipe', shell: false });
+      const psScript = [
+        `$action = New-ScheduledTaskAction -Execute '${process.execPath.replace(/'/g, "''")}' -Argument '"${hookRunner.replace(/'/g, "''")}\" start-worker'`,
+        `$trigger = New-ScheduledTaskTrigger -AtLogOn`,
+        `Register-ScheduledTask -TaskName '${TASK_NAME}' -Action $action -Trigger $trigger -RunLevel Limited -Force`,
+      ].join('; ');
+      const result = spawnSync('powershell', ['-NoProfile', '-Command', psScript], {
+        stdio: 'pipe', shell: false,
+      });
       if (result.status === 0) {
         process.stderr.write('[claude-mem] Auto-start registered: worker will start on next Windows login\n');
       } else {
@@ -168,7 +168,7 @@ async function main() {
       }
       const TASK_NAME = 'claude-mem-worker';
       const markerPath = path.join(pluginRoot, '.autostart-registered');
-      spawnSync('schtasks', ['/Delete', '/TN', TASK_NAME, '/F'], { stdio: 'pipe', shell: false });
+      spawnSync('powershell', ['-NoProfile', '-Command', `Unregister-ScheduledTask -TaskName '${TASK_NAME}' -Confirm:$false -ErrorAction SilentlyContinue`], { stdio: 'pipe', shell: false });
       try { require('fs').unlinkSync(markerPath); } catch { /* already gone */ }
       process.stderr.write('[claude-mem] Auto-start unregistered\n');
       break;

@@ -365,15 +365,16 @@ function registerWindowsAutoStart() {
     const nodePath = process.execPath;
     const hookRunner = join(ROOT, 'scripts', 'hook-runner.js');
 
-    // Create a hidden at-logon task for the current user (no admin needed)
-    const result = spawnSync('schtasks', [
-      '/Create',
-      '/TN', TASK_NAME,
-      '/TR', `"${nodePath}" "${hookRunner}" start-worker`,
-      '/SC', 'ONLOGON',
-      '/RL', 'LIMITED',   // run as current user, limited privileges
-      '/F',               // overwrite if exists
-    ], { stdio: 'pipe', shell: false });
+    // Use PowerShell cmdlets to register the task — avoids Git Bash
+    // mangling schtasks.exe flags (it interprets /Create as a Unix path).
+    const psScript = [
+      `$action = New-ScheduledTaskAction -Execute '${nodePath.replace(/'/g, "''")}' -Argument '"${hookRunner.replace(/'/g, "''")}" start-worker'`,
+      `$trigger = New-ScheduledTaskTrigger -AtLogOn`,
+      `Register-ScheduledTask -TaskName '${TASK_NAME}' -Action $action -Trigger $trigger -RunLevel Limited -Force`,
+    ].join('; ');
+    const result = spawnSync('powershell', ['-NoProfile', '-Command', psScript], {
+      stdio: 'pipe', shell: false,
+    });
 
     if (result.status === 0) {
       writeFileSync(markerPath, new Date().toISOString());

@@ -71,10 +71,11 @@ function removeFromClaudeSettings(): void {
 
 function removeWindowsAutoStart(): number {
   if (process.platform !== 'win32') return -1;
-  const result = spawnSync('schtasks', ['/Delete', '/TN', 'claude-mem-worker', '/F'], {
-    stdio: 'pipe',
-    shell: false,
-  });
+  // Use PowerShell to avoid Git Bash mangling schtasks.exe flags
+  const result = spawnSync('powershell', [
+    '-NoProfile', '-Command',
+    "Unregister-ScheduledTask -TaskName 'claude-mem-worker' -Confirm:$false -ErrorAction SilentlyContinue",
+  ], { stdio: 'pipe', shell: false });
   return result.status ?? 1;
 }
 
