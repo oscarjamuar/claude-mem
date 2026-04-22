@@ -223,6 +223,36 @@ async function handleTool(name, args) {
   }
 }
 
+// ── Auto-save instructions injected into every conversation ──────────────────
+const AUTO_SAVE_INSTRUCTIONS = `
+You have access to claude-mem — a persistent memory system. Follow these rules automatically, without being asked:
+
+1. **At the START of every conversation**: Call the \`search\` tool with keywords from the user's first message to check if there is relevant past context. Silently surface anything useful.
+
+2. **During the conversation**: When the user makes an important decision, solves a problem, discovers something, or completes a meaningful task — call \`store_observation\` immediately to record it. Do NOT wait until the end.
+
+3. **At the END of every conversation**: Before your final response, call \`store_observation\` once with a concise summary of:
+   - What the user was working on (project name if known)
+   - What was decided or accomplished
+   - Any key facts, file names, or context that would be useful next time
+
+Use type \`decision\` for choices made, \`discovery\` for things learned, \`bugfix\` for bugs fixed, \`feature\` for features built, \`note\` for general context.
+
+Always set \`project\` to the project name if you know it (e.g. "shiftelio_webapp").
+
+These rules apply to EVERY conversation automatically — never skip them.
+`.trim();
+
+const PROMPTS = [
+  {
+    name: 'save-session',
+    description: 'Save a summary of this conversation to claude-mem memory',
+    arguments: [
+      { name: 'project', description: 'Project name (optional)', required: false },
+    ],
+  },
+];
+
 // ── JSON-RPC message handler ─────────────────────────────────────────────────
 function respond(id, result) {
   const msg = JSON.stringify({ jsonrpc: '2.0', id, result });
@@ -240,13 +270,18 @@ async function handleMessage(msg) {
   if (method === 'initialize') {
     respond(id, {
       protocolVersion: '2024-11-05',
-      capabilities: { tools: {} },
-      serverInfo: { name: 'claude-mem', version: '1.0.0' },
+      capabilities: { tools: {}, prompts: {} },
+      serverInfo: {
+        name: 'claude-mem',
+        version: '1.0.0',
+        // Claude Desktop reads this and uses it as behavioral instructions
+        instructions: AUTO_SAVE_INSTRUCTIONS,
+      },
     });
     return;
   }
 
-  if (method === 'notifications/initialized') return; // no response needed
+  if (method === 'notifications/initialized') return;
 
   if (method === 'tools/list') {
     respond(id, { tools: TOOLS });
@@ -263,6 +298,33 @@ async function handleMessage(msg) {
         content: [{ type: 'text', text: `Error: ${err.message}` }],
         isError: true,
       });
+    }
+    return;
+  }
+
+  if (method === 'prompts/list') {
+    respond(id, { prompts: PROMPTS });
+    return;
+  }
+
+  if (method === 'prompts/get') {
+    const { name, arguments: args } = params;
+    if (name === 'save-session') {
+      const project = args?.project ? ` for project "${args.project}"` : '';
+      respond(id, {
+        description: 'Save a summary of this conversation to claude-mem memory',
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: `Please summarise what we have accomplished in this conversation${project} and save it to claude-mem memory using the store_observation tool. Include: what we worked on, decisions made, problems solved, and any important context for next time.`,
+            },
+          },
+        ],
+      });
+    } else {
+      respondError(id, -32602, `Unknown prompt: ${name}`);
     }
     return;
   }
